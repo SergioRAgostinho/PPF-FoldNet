@@ -1,10 +1,12 @@
 from __future__ import print_function
 from __future__ import division
 
+from distutils.version import LooseVersion
 from pathlib import Path
 import argparse
 import math
 import numpy as np
+import open3d as o3d
 import os.path as osp
 import sys
 
@@ -14,6 +16,16 @@ if ROOT_DIR not in sys.path:
 
 from utils import io as uio
 
+# compatibility between different Open3D versions
+create_rgbd_image_from_color_and_depth = None
+estimate_normals = None
+if LooseVersion(o3d.__version__) >= LooseVersion("0.7"):
+    create_rgbd_image_from_color_and_depth = o3d.geometry.RGBDImage.create_from_color_and_depth
+    estimate_normals = o3d.geometry.PointCloud.estimate_normals
+else:
+    create_rgbd_image_from_color_and_depth = o3d.geometry.create_rgbd_image_from_color_and_depth
+    estimate_normals = o3d.geometry.estimate_normals
+
 
 # ---------------------------------------------------------------------------- #
 # Fuse rgbd frames into fragments in 3DMatch
@@ -21,7 +33,6 @@ from utils import io as uio
 # - Save colors & normals
 # ---------------------------------------------------------------------------- #
 def read_intrinsic(filepath, width, height):
-    import open3d as o3d
 
     m = np.loadtxt(filepath, dtype=np.float32)
     intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, m[0, 0], m[1, 1], m[0, 2], m[1, 2])
@@ -36,7 +47,6 @@ def read_extrinsic(filepath):
 
 
 def read_rgbd_image(cfg, color_file, depth_file, convert_rgb_to_intensity):
-    import open3d as o3d
     if color_file is None:
         color_file = depth_file # to avoid "Unsupported image format."
         # rgbd_image = o3d.RGBDImage()
@@ -44,13 +54,11 @@ def read_rgbd_image(cfg, color_file, depth_file, convert_rgb_to_intensity):
         # return rgbd_image
     color = o3d.io.read_image(color_file)
     depth = o3d.io.read_image(depth_file)
-    rgbd_image = o3d.geometry.create_rgbd_image_from_color_and_depth(color, depth, cfg.depth_scale, cfg.depth_trunc,
-                                                                     convert_rgb_to_intensity)
+    rgbd_image = create_rgbd_image_from_color_and_depth(color, depth, cfg.depth_scale, cfg.depth_trunc, convert_rgb_to_intensity)
     return rgbd_image
 
 
 def process_single_fragment(cfg, color_files, depth_files, frag_id, n_frags, intrinsic_path, out_folder):
-    import open3d as o3d
 
     depth_only_flag = (len(color_files) == 0)
     n_frames = len(depth_files)
@@ -93,8 +101,8 @@ def process_single_fragment(cfg, color_files, depth_files, frag_id, n_frags, int
         return
 
     pcloud = volume.extract_point_cloud()
-    o3d.geometry.estimate_normals(pcloud)
-    o3d.write_point_cloud(osp.join(out_folder, 'cloud_bin_{}.ply'.format(frag_id)), pcloud)
+    estimate_normals(pcloud)
+    o3d.io.write_point_cloud(osp.join(out_folder, 'cloud_bin_{}.ply'.format(frag_id)), pcloud)
 
     np.save(osp.join(out_folder, 'cloud_bin_{}.pose.npy'.format(frag_id)), pose_base2world)
 
